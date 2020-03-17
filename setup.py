@@ -12,7 +12,7 @@ if sys.version_info[0] < 3:
 setup(
 	name="liqloopibapi",
 	version=open('liqloopibapi/version.py').read(),
-	description=('Simple liqloopibapi for python'),
+	description=('Simple liqloopibapi in python'),
 	url='https://github.com/breath2live/liqloopibapi',
 
 	author='Sam Classix',
