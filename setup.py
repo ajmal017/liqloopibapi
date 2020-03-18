@@ -24,5 +24,5 @@ setup(
 	packages=['liqloopibapi'],
 	include_package_data=True,
 
-	install_requires=['numpy', 'pandas', 'ibapi']
+	install_requires=['numpy', 'pandas', 'ibapi', 'sqlhandle']
 )
