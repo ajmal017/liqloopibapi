@@ -1,12 +1,13 @@
 from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
-from ibapi.contract import Contract
+from ibapi.contract import Contract, ContractDetails
 from ibapi.execution import ExecutionFilter
 from liqloopibapi.datatype import *
 from liqloopibapi.errorCode import *
 from sqlhandle import sqlhandle
 from threading import Event
 from threading import Lock
+import copy
 import pandas as pd
 #from datetime import datetime
 #import md5
@@ -86,56 +87,69 @@ class ibapihandle(EWrapper, EClient):
 			#self.myDatabase.tblCreateFromArrayH("{}updatePosition".format(self.__accountID), updatePositionArray)
 			#self.myDatabase.tblCreateFromArrayH("{}updateOpenOrder".format(self.__accountID), updateOpenOrderArray)
 
-	# downloadOPT
 	def downloadOptionChain(self, con :Contract, end='', duration='1 Y', tick='1 min', RTH=1, axis=1):
 		downloadOptionChain_event = Event()
 		downloadOptionChain_data = []
 		if axis == 1:
+			# init input data
 			contractChain = Contract()
 			if con.lastTradeDateOrContractMonth == '' : return errContract().missing_lastTradeDateOrContractMonth
-			if int(con.conId) == int(0) :
-				if con.symbol == '' : return errContract().missing_symbol
-				if con.secType == '' :
-					errContract().warning_secTypeToOPT
-					con.secType = 'OPT'
-				if con.exchange.upper() != 'CBOE' :
-					errContract().warning_exchangeChangeToCBOE
-					con.exchange = 'CBOE'
-				if con.currency == '' :
-					errContract().warning_currencyChangeToUSD
-					con.currency = 'USD'
-				if con.multiplier == '' :
-					errContract().warning_multiplierChangeTo100
-					con.multiplier == 100
-
-				contractChain.symbol = con.symbol.upper()
-				contractChain.secType = con.secType.upper()
-				contractChain.exchange = con.exchange.upper()
-				contractChain.currency = con.currency.upper()
-				contractChain.right = con.right.upper()
-				contractChain.multiplier = con.multiplier
-
-				contractUL = Contract()
-				contractUL.symbol = contractChain.symbol
-				contractUL.secType = 'STK'
-				contractUL.exchange = 'SMART'
-				contractUL.currency = contractChain.currency
-
-				# get conId form underlaying
-				with self.__nextValidId_lock:
-					self.__events = self.__events.append(pd.DataFrame([[self.nextOrderId, downloadOptionChain_event.set, downloadOptionChain_data]], columns=self.__events.columns), ignore_index=True)
-					self.__debug(self.__events)
-					self.__debug(self.nextOrderId)
-					self.reqContractDetails(self.nextOrderId, contractUL)
-
-				downloadOptionChain_event.wait(5)
-				print(downloadOptionChain_data)
-
-
-
+			if con.symbol == '' : return errContract().missing_symbol
+			if con.secType == '' :
+				errContract().warning_secTypeToOPT
+				con.secType = 'OPT'
+			if con.exchange.upper() != 'CBOE' :
+				errContract().warning_exchangeChangeToCBOE
+				con.exchange = 'CBOE'
+			if con.currency == '' :
+				errContract().warning_currencyChangeToUSD
+				con.currency = 'USD'
+			if con.multiplier == '' :
+				errContract().warning_multiplierChangeTo100
+				con.multiplier == 100
+			contractChain.symbol = con.symbol.upper()
+			contractChain.secType = con.secType.upper()
+			contractChain.exchange = con.exchange.upper()
+			contractChain.currency = con.currency.upper()
+			contractChain.right = con.right.upper()
+			contractChain.multiplier = con.multiplier
 			contractChain.lastTradeDateOrContractMonth = con.lastTradeDateOrContractMonth
+
+			# download optionChain
+			print('ok')
 
 		else:
 			return 'Dev. Stage'
-			if con.strike == '' : return errContract().missing_strike
-			contractChain.strike = con.strike
+			#if con.strike == '' : return errContract().missing_strike
+			#contractChain.strike = con.strike
+
+			contractUL = Contract()
+			contractUL.symbol = con.symbol.upper()
+			contractUL.secType = 'STK'
+			contractUL.exchange = 'SMART'
+			contractUL.currency = 'USD'
+
+			# get conId form underlaying
+			with self.__nextValidId_lock:
+				self.__events = self.__events.append(pd.DataFrame([[self.nextOrderId, downloadOptionChain_event.set, downloadOptionChain_data]], columns=self.__events.columns), ignore_index=True)
+				self.reqContractDetails(self.nextOrderId, contractUL)
+
+			downloadOptionChain_event.wait(5)
+
+			if len(downloadOptionChain_data) > 0:
+				if type(downloadOptionChain_data[0]) == ContractDetails :
+					self.__debug(downloadOptionChain_data[0].contract.conId)
+				else:
+					self.__debug("ERR invalid data")
+					return 1
+			else:
+				self.__debug('ERR no data received')
+				return 1
+
+	# contractDetails
+	def contractDetails(self, reqId :int, contractDetails :Contract):
+		row = self.__events[self.__events['reqId'] == reqId].index.values.astype(int)[0]
+		self.__events.at[row, 'data'].append(copy.deepcopy(contractDetails))
+		self.__events.at[row, 'funcPnt']()
+		self.__events.drop([row], axis=0, inplace=True)
+	# END contractDetails
