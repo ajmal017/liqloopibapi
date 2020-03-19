@@ -4,16 +4,20 @@ from ibapi.contract import Contract
 from ibapi.execution import ExecutionFilter
 from liqloopibapi.datatype import *
 from liqloopibapi.errorCode import *
-#import md5
-#from liqloopibapi import updateValues
 from sqlhandle import sqlhandle
-from datetime import datetime
-import threading
+from threading import Event
+from threading import Lock
+import pandas as pd
+#from datetime import datetime
+#import md5
+#import threading
 
 
 class ibapihandle(EWrapper, EClient):
 	__debugEN = 1
 	__debugEN01 = 0
+	__nextValidId_lock = Lock()
+	__events = pd.DataFrame([], columns=['reqId', 'funcPnt', 'data'])
 
 	# Debug method
 	def __debug(self, *str):
@@ -40,6 +44,9 @@ class ibapihandle(EWrapper, EClient):
 	def get_sqlcnx(self):
 		return self.__sqlcnx
 
+	def error(self, reqId, errorCode, errorString):
+		self.__debug("<{}>".format(errorCode), errorString)
+
 	def connectApi(self):
 		self.__debug('connecting to API gateway', self.__gwcnx)
 		self.connect(self.__gwcnx.host, self.__gwcnx.port, self.__gwcnx.clientId)
@@ -54,7 +61,7 @@ class ibapihandle(EWrapper, EClient):
 		c = contractArray()
 		self.database.dbCreate('history')
 		self.database.tblCreateFromArray('history.contract', c.sqlhead, data=0)
-		self.database.tblCreate('CBOE_OPT_WORKFLOW', 'CHAR(32)', force=0)
+		#self.database.tblCreate('CBOE_OPT_WORKFLOW', 'CHAR(32)', force=0)
 
 		self.database.dbCreate('live')
 		self.database.tblCreateFromArray('live.contract', c.sqlhead, data=0)
@@ -81,26 +88,54 @@ class ibapihandle(EWrapper, EClient):
 
 	# downloadOPT
 	def downloadOptionChain(self, con :Contract, end='', duration='1 Y', tick='1 min', RTH=1, axis=1):
-		contractChain = Contract()
-		if con.symbol == '' : return errContract().missing_lastTradeDateOrContractMonth
-		if con.secType == '' : return errContract().missing_secType
-		if con.exchange.upper() != 'CBOE' :
-			self.__debug(errContract().warning_exchangeChangeToCBOE)
-			con.exchange = 'CBOE'
-		if con.currency == '' : return errContract().missing_currency
-		if con.right == '' : return errContract().missing_right
-		if con.multiplier == '' : return errContract().missing_multiplier
-
-		contractChain.symbol = con.symbol.upper()
-		contractChain.secType = con.secType.upper()
-		contractChain.exchange = con.exchange.upper()
-		contractChain.currency = con.currency.upper()
-		contractChain.right = con.right.upper()
-		contract.multiplier = con.multiplier
-
+		downloadOptionChain_event = Event()
+		downloadOptionChain_data = []
 		if axis == 1:
+			contractChain = Contract()
 			if con.lastTradeDateOrContractMonth == '' : return errContract().missing_lastTradeDateOrContractMonth
+			if int(con.conId) == int(0) :
+				if con.symbol == '' : return errContract().missing_symbol
+				if con.secType == '' :
+					errContract().warning_secTypeToOPT
+					con.secType = 'OPT'
+				if con.exchange.upper() != 'CBOE' :
+					errContract().warning_exchangeChangeToCBOE
+					con.exchange = 'CBOE'
+				if con.currency == '' :
+					errContract().warning_currencyChangeToUSD
+					con.currency = 'USD'
+				if con.multiplier == '' :
+					errContract().warning_multiplierChangeTo100
+					con.multiplier == 100
+
+				contractChain.symbol = con.symbol.upper()
+				contractChain.secType = con.secType.upper()
+				contractChain.exchange = con.exchange.upper()
+				contractChain.currency = con.currency.upper()
+				contractChain.right = con.right.upper()
+				contractChain.multiplier = con.multiplier
+
+				contractUL = Contract()
+				contractUL.symbol = contractChain.symbol
+				contractUL.secType = 'STK'
+				contractUL.exchange = 'SMART'
+				contractUL.currency = contractChain.currency
+
+				# get conId form underlaying
+				with self.__nextValidId_lock:
+					self.__events = self.__events.append(pd.DataFrame([[self.nextOrderId, downloadOptionChain_event.set, downloadOptionChain_data]], columns=self.__events.columns), ignore_index=True)
+					self.__debug(self.__events)
+					self.__debug(self.nextOrderId)
+					self.reqContractDetails(self.nextOrderId, contractUL)
+
+				downloadOptionChain_event.wait(5)
+				print(downloadOptionChain_data)
+
+
+
 			contractChain.lastTradeDateOrContractMonth = con.lastTradeDateOrContractMonth
+
 		else:
+			return 'Dev. Stage'
 			if con.strike == '' : return errContract().missing_strike
 			contractChain.strike = con.strike
