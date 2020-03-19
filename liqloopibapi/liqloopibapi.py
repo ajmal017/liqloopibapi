@@ -9,6 +9,8 @@ from threading import Event
 from threading import Lock
 import copy
 import pandas as pd
+import numpy as np
+from time import sleep
 #from datetime import datetime
 #import md5
 #import threading
@@ -17,7 +19,7 @@ import pandas as pd
 class ibapihandle(EWrapper, EClient):
 	__debugEN = 1
 	__debugEN01 = 0
-	__nextValidId_lock = Lock()
+	__reqId = []
 	__events = pd.DataFrame([], columns=['reqId', 'funcPnt', 'data'])
 
 	# Debug method
@@ -41,7 +43,6 @@ class ibapihandle(EWrapper, EClient):
 
 	def get_gwcnx(self):
 		return self.__gwcnx
-
 	def get_sqlcnx(self):
 		return self.__sqlcnx
 
@@ -87,9 +88,71 @@ class ibapihandle(EWrapper, EClient):
 			#self.myDatabase.tblCreateFromArrayH("{}updatePosition".format(self.__accountID), updatePositionArray)
 			#self.myDatabase.tblCreateFromArrayH("{}updateOpenOrder".format(self.__accountID), updateOpenOrderArray)
 
+	def getReqId(self):
+		new = np.random.randint(np.random.randint(2147483647))
+		while new in self.__reqId:
+			new = np.random.randint(np.random.randint(2147483647))
+		self.__reqId.append(int(new))
+		return int(new)
+
+	def rmReqId(self, reqId):
+		self.__reqId.remove(reqId)
+
+	def getContractDetails(self, contract :Contract, timeout=2, event=1):
+		getConId_event = None
+		getConId_data = []
+		reqId = self.getReqId()
+		if event == 1: getConId_event = Event()
+
+		self.__events = self.__events.append(pd.DataFrame([[reqId, getConId_event, getConId_data]], columns=self.__events.columns), ignore_index=True)
+		self.reqContractDetails(reqId, contract)
+		if event == 1: getConId_event.wait(timeout)
+		else:
+			sleep(timeout)
+			# delete event
+		try:
+			if len(getConId_data) > 0:
+				if type(getConId_data[0]) == ContractDetails :
+					res = getConId_data
+					self.__debug('getContractDetails <{}> {}'.format(contract.symbol, len(getConId_data)))
+				else:
+					res = 1
+					self.__debug("getConId_data <Invalid data>")
+			else:
+				res = 2
+				self.__debug('getConId_data <No data received>')
+		finally:
+			self.rmReqId(reqId)
+			return res
+
 	def downloadOptionChain(self, con :Contract, end='', duration='1 Y', tick='1 min', RTH=1, axis=1):
 		downloadOptionChain_event = Event()
 		downloadOptionChain_data = []
+
+		contractUL = Contract()
+		contractUL.symbol = con.symbol.upper()
+		contractUL.secType = 'STK'
+		contractUL.exchange = 'SMART'
+		contractUL.currency = 'USD'
+
+		# get conId form underlaying
+		self.__debug(self.getContractDetails(contractUL)[0].contract.conId)
+
+		contract = Contract()
+		contract.symbol = 'AAPL'
+		contract.secType = 'OPT'
+		contract.exchange = 'CBOE'
+		contract.lastTradeDateOrContractMonth = '20200320'
+		contract.multiplier = 100
+
+
+		print('---')
+		res = self.getContractDetails(contract, timeout=2, event=0)
+		print(len(res))
+		for item in res:
+			print(item.contract.conId, item.contract.symbol, item.contract.right, item.contract.strike)
+
+		return 1
 		if axis == 1:
 			# init input data
 			contractChain = Contract()
@@ -117,39 +180,21 @@ class ibapihandle(EWrapper, EClient):
 
 			# download optionChain
 			print('ok')
+			self.__events = self.__events.append(pd.DataFrame([[self.nextOrderId, None, downloadOptionChain_data]], columns=self.__events.columns), ignore_index=True)
+
 
 		else:
 			return 'Dev. Stage'
 			#if con.strike == '' : return errContract().missing_strike
 			#contractChain.strike = con.strike
 
-			contractUL = Contract()
-			contractUL.symbol = con.symbol.upper()
-			contractUL.secType = 'STK'
-			contractUL.exchange = 'SMART'
-			contractUL.currency = 'USD'
-
-			# get conId form underlaying
-			with self.__nextValidId_lock:
-				self.__events = self.__events.append(pd.DataFrame([[self.nextOrderId, downloadOptionChain_event.set, downloadOptionChain_data]], columns=self.__events.columns), ignore_index=True)
-				self.reqContractDetails(self.nextOrderId, contractUL)
-
-			downloadOptionChain_event.wait(5)
-
-			if len(downloadOptionChain_data) > 0:
-				if type(downloadOptionChain_data[0]) == ContractDetails :
-					self.__debug(downloadOptionChain_data[0].contract.conId)
-				else:
-					self.__debug("ERR invalid data")
-					return 1
-			else:
-				self.__debug('ERR no data received')
-				return 1
-
 	# contractDetails
 	def contractDetails(self, reqId :int, contractDetails :Contract):
-		row = self.__events[self.__events['reqId'] == reqId].index.values.astype(int)[0]
-		self.__events.at[row, 'data'].append(copy.deepcopy(contractDetails))
-		self.__events.at[row, 'funcPnt']()
-		self.__events.drop([row], axis=0, inplace=True)
+		req = self.__events[self.__events['reqId'] == reqId]
+		if len(req) != 0 :
+			row = req.index.values.astype(int)[0]
+			self.__events.at[row, 'data'].append(copy.deepcopy(contractDetails))
+			if self.__events.at[row, 'funcPnt'] != None :
+				self.__events.at[row, 'funcPnt'].set()
+				self.__events.drop([row], axis=0, inplace=True)
 	# END contractDetails
