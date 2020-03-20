@@ -28,7 +28,7 @@ class contractArray():
 						["currency", "VARCHAR(255)"], \
 						["localSymbol", "VARCHAR(255)"], \
 						["tradingClass", "VARCHAR(255)"], \
-						["includeExpired", "BIT"], \
+						["includeExpired", "INT"], \
 						["secIdType", "VARCHAR(255)"] ]
 		self.sqlhead = np.transpose(self.sqlkey)
 

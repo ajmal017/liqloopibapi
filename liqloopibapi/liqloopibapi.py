@@ -2,6 +2,7 @@ from ibapi.client import EClient
 from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract, ContractDetails
 from ibapi.execution import ExecutionFilter
+from ibapi.common import BarData
 from liqloopibapi.datatype import *
 from liqloopibapi.errorCode import *
 from sqlhandle import sqlhandle
@@ -62,11 +63,8 @@ class ibapihandle(EWrapper, EClient):
 		# init base structure # init mktData db
 		c = contractArray()
 		self.database.dbCreate('history')
-		self.database.tblCreateFromArray('history.contract', c.sqlhead, data=0)
-		#self.database.tblCreate('CBOE_OPT_WORKFLOW', 'CHAR(32)', force=0)
-
 		self.database.dbCreate('live')
-		self.database.tblCreateFromArray('live.contract', c.sqlhead, data=0)
+		#self.database.tblCreate('CBOE_OPT_WORKFLOW', 'CHAR(32)', force=0)
 
 		self.database.dbCreate('general')
 		self.database.tblCreateFromArray('general.contract', c.sqlhead, data=0)
@@ -97,6 +95,10 @@ class ibapihandle(EWrapper, EClient):
 
 	def rmReqId(self, reqId):
 		self.__reqId.remove(reqId)
+		req = self.__events[self.__events['reqId'] == reqId]
+		if len(req) != 0 :
+			row = req.index.values.astype(int)[0]
+			self.__events.drop([row], axis=0, inplace=True)
 
 	def getContractDetails(self, contract :Contract, timeout=2, event=1):
 		getConId_event = None
@@ -106,10 +108,11 @@ class ibapihandle(EWrapper, EClient):
 
 		self.__events = self.__events.append(pd.DataFrame([[reqId, getConId_event, getConId_data]], columns=self.__events.columns), ignore_index=True)
 		self.reqContractDetails(reqId, contract)
+
 		if event == 1: getConId_event.wait(timeout)
 		else:
 			sleep(timeout)
-			# delete event
+
 		try:
 			if len(getConId_data) > 0:
 				if type(getConId_data[0]) == ContractDetails :
@@ -125,7 +128,66 @@ class ibapihandle(EWrapper, EClient):
 			self.rmReqId(reqId)
 			return res
 
-	def downloadOptionChain(self, con :Contract, end='', duration='1 Y', tick='1 min', RTH=1, axis=1):
+	def getHistoricalData(self, contract :Contract, end, duration, tick, type, timeout=60):
+		getHistoricalData_event = Event()
+		getHistoricalData_data = []
+		reqId = self.getReqId()
+
+		self.__events = self.__events.append(pd.DataFrame([[reqId, getHistoricalData_event, getHistoricalData_data]], columns=self.__events.columns), ignore_index=True)
+		self.reqHistoricalData(reqId, contract, end, duration, tick, type, 1, 1, False, [])
+		getHistoricalData_event.wait(timeout)
+
+		print(type(getHistoricalData_data[0]))
+		return 99
+		try:
+			if len(getHistoricalData_data) > 0:
+				if type(getHistoricalData_data[0]) == BarData :
+					res = getHistoricalData_data
+					self.__debug('getHistoricalData <{}> Block <{}> Items <{}>'.format(contract.symbol, end, len(getHistoricalData_data)))
+				else:
+					res = 1
+					self.__debug("getHistoricalData_data <Invalid data>")
+			else:
+				res = 2
+				self.__debug('getHistoricalData_data <No data received>')
+		finally:
+			self.rmReqId(reqId)
+			return res
+
+
+	def tblOptionChainAppend(self, contract :Contract):
+		arr = [	['conId', 'symbol', 'secType', 'currency', 'tblOptionName'],
+				[contract.conId, contract.symbol, contract.secType, contract.currency, '{}_OPT'.format(contract.symbol)]]
+		return self.database.tblInsertArray('general.optionChain', arr, insert='INSERT IGNORE INTO')
+
+	def tblContractAppend(self, contractList):
+		df = contractArray().df
+		for item in contractList:
+			df = df.append(pd.DataFrame([[	item.symbol, item.secType, item.lastTradeDateOrContractMonth,
+											item.strike, item.right, item.multiplier, item.exchange, item.primaryExchange,
+											item.currency, item.localSymbol, item.tradingClass, int(item.includeExpired), item.secType
+										]], [item.conId], df.columns))
+		return self.database.tblInsertDataFrame('general.contract', df, indexname='conId', insert='INSERT IGNORE INTO')
+
+	def tblContractOptionChainAppend(self, contract :Contract, contractList):
+		# create table, if needed
+		table = 'general.{}_optionChain_Put'.format(contract.symbol)
+		date = 'conId_{}'.format(contract.lastTradeDateOrContractMonth)
+		if type(self.database.tblCreate(table, 'strike FLOAT NOT NULL', 'conRight VARCHAR(255) NOT NULL', '{} INT UNIQUE'.format(date))) != int:
+			self.database.tblAlter(table, 'ADD {} INT UNIQUE'.format(date))
+
+		df = pd.DataFrame([], columns=['strike', 'conRight', date])
+		for item in contractList:
+			df = df.append(pd.DataFrame([[item.strike, item.right, item.conId]], columns=df.columns), ignore_index=True)
+		#print(df)
+		self.database.tblInsertDataFrame(table, df, insert='INSERT IGNORE INTO', incl_index=0)
+		# make DataFrame and INSERT
+		# no error, and right execution, however, not working
+		# if you copy the string code and execute it in the console, it works...
+		#for item in df[df['right'] == 'P'].index :
+			#self.database.execute('INSERT INTO {table} (strike, {date}) VALUES ({strike}, {conId}) ON DUPLICATE KEY UPDATE {date}={conId}'.format(table=tablePut, date=date, strike=df.loc[item, 'strike'], conId=df.loc[item, date]))
+
+	def downloadOptionChain(self, con :Contract):
 		downloadOptionChain_event = Event()
 		downloadOptionChain_data = []
 
@@ -136,23 +198,13 @@ class ibapihandle(EWrapper, EClient):
 		contractUL.currency = 'USD'
 
 		# get conId form underlaying
-		self.__debug(self.getContractDetails(contractUL)[0].contract.conId)
+		res = self.getContractDetails(contractUL)
+		if type(res) == list :
+			contractUL = res[0].contract
+		else:
+			return res
 
-		contract = Contract()
-		contract.symbol = 'AAPL'
-		contract.secType = 'OPT'
-		contract.exchange = 'CBOE'
-		contract.lastTradeDateOrContractMonth = '20200320'
-		contract.multiplier = 100
-
-
-		print('---')
-		res = self.getContractDetails(contract, timeout=2, event=0)
-		print(len(res))
-		for item in res:
-			print(item.contract.conId, item.contract.symbol, item.contract.right, item.contract.strike)
-
-		return 1
+		axis =1
 		if axis == 1:
 			# init input data
 			contractChain = Contract()
@@ -179,9 +231,21 @@ class ibapihandle(EWrapper, EClient):
 			contractChain.lastTradeDateOrContractMonth = con.lastTradeDateOrContractMonth
 
 			# download optionChain
-			print('ok')
-			self.__events = self.__events.append(pd.DataFrame([[self.nextOrderId, None, downloadOptionChain_data]], columns=self.__events.columns), ignore_index=True)
+			optionChain = []
+			res = self.getContractDetails(contractChain, event=0,timeout=5)
+			if type(res) == list :
+				for item in res:
+					optionChain.append(item.contract)
+			else:
+				return res
 
+			# add optionChain contracts to table general.contract
+			self.tblContractAppend(optionChain)
+
+			# add IF not EXISTs in general.optionChain
+			#self.tblOptionChainAppend(contractUL)
+			# add to contract_optionChain
+			#self.tblContractOptionChainAppend(contractChain, optionChain)
 
 		else:
 			return 'Dev. Stage'
@@ -193,8 +257,24 @@ class ibapihandle(EWrapper, EClient):
 		req = self.__events[self.__events['reqId'] == reqId]
 		if len(req) != 0 :
 			row = req.index.values.astype(int)[0]
-			self.__events.at[row, 'data'].append(copy.deepcopy(contractDetails))
-			if self.__events.at[row, 'funcPnt'] != None :
-				self.__events.at[row, 'funcPnt'].set()
-				self.__events.drop([row], axis=0, inplace=True)
+			self.__events.at[row, 'data'].append(contractDetails)
+			if self.__events.at[row, 'funcPnt'] != None : self.__events.at[row, 'funcPnt'].set()
 	# END contractDetails
+	# DEF historicalData
+	def historicalData(self, reqId :int, bar :BarData):
+		#print('histData')
+		req = self.__events[self.__events['reqId'] == reqId]
+		if len(req) != 0 :
+			row = req.index.values.astype(int)[0]
+			self.__events.at[row, 'data'].append(bar)
+			print('apprended', len(self.__events.at[row, 'data']))
+	# END historicalData
+	# DEF historicalDataEnd
+	def historicalDataEnd(self, reqId :int, start :str, end :str):
+		#print('histDataEnd')
+		super().historicalDataEnd(reqId, start, end)
+		req = self.__events[self.__events['reqId'] == reqId]
+		if len(req) != 0 :
+			row = req.index.values.astype(int)[0]
+			if self.__events.at[row, 'funcPnt'] != None : self.__events.at[row, 'funcPnt'].set()
+	# END historicalDataEnd
