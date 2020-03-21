@@ -4,6 +4,42 @@ datatype.py
 import numpy as np
 import pandas as pd
 
+class barDataArray():
+	"""
+	Array to collect barData(s) information
+	"""
+	class attr():
+		def __init__(self, var):
+			self.key = var
+			self.name = var[0]
+			self.type = var[1]
+			self.keystr = ' '.join(var)
+
+	def __init__(self):
+		self.sqlkey = [	["date", "DATETIME NOT NULL UNIQUE PRIMARY KEY"], \
+						["open", "FLOAT"], \
+						["high", "FLOAT"], \
+						["low", "FLOAT"], \
+						["close", "FLOAT"], \
+						["volume", "INT"], \
+						["average", "FLOAT"], \
+						["barCount", "INT"] ]
+
+		self.sqlhead = np.transpose(self.sqlkey)
+
+		self.date = self.attr(self.sqlkey[0])
+		self.open = self.attr(self.sqlkey[1])
+		self.high = self.attr(self.sqlkey[2])
+		self.low = self.attr(self.sqlkey[3])
+		self.close = self.attr(self.sqlkey[4])
+		self.volume = self.attr(self.sqlkey[5])
+		self.average = self.attr(self.sqlkey[6])
+		self.barCount = self.attr(self.sqlkey[7])
+
+		self.df = pd.DataFrame([], columns=self.sqlhead[0])
+		self.df['date'] = pd.to_datetime(self.df['date'])
+		self.df.set_index('date', inplace=True)
+
 class contractArray():
 	"""
 	Array to collect contract(s) information

@@ -12,23 +12,24 @@ import copy
 import pandas as pd
 import numpy as np
 from time import sleep
+import sys
 #from datetime import datetime
 #import md5
 #import threading
 
 
 class ibapihandle(EWrapper, EClient):
-	__debugEN = 1
-	__debugEN01 = 0
+	debugEN = 1
+	debugEN01 = 0
 	__reqId = []
 	__events = pd.DataFrame([], columns=['reqId', 'funcPnt', 'data'])
 
 	# Debug method
 	def __debug(self, *str):
-		if self.__debugEN == 1 :
+		if self.debugEN == 1 :
 			print("[API] {}".format(str))
 	def __debug01(self, *str):
-		if self.__debugEN01 == 1 :
+		if self.debugEN01 == 1 :
 			print("[API] {}".format(str))
 
 	# init
@@ -48,7 +49,11 @@ class ibapihandle(EWrapper, EClient):
 		return self.__sqlcnx
 
 	def error(self, reqId, errorCode, errorString):
-		self.__debug("<{}>".format(errorCode), errorString)
+		req = self.__events[self.__events['reqId'] == reqId]
+		if len(req) != 0 :
+			row = req.index.values.astype(int)[0]
+			if self.__events.at[row, 'funcPnt'] != None : self.__events.at[row, 'funcPnt'].set()
+		self.__debug("reqId={} errorCode=<{}>".format(reqId, errorCode), errorString)
 
 	def connectApi(self):
 		self.__debug('connecting to API gateway', self.__gwcnx)
@@ -100,6 +105,7 @@ class ibapihandle(EWrapper, EClient):
 			row = req.index.values.astype(int)[0]
 			self.__events.drop([row], axis=0, inplace=True)
 
+	# GET Methods
 	def getContractDetails(self, contract :Contract, timeout=2, event=1):
 		getConId_event = None
 		getConId_data = []
@@ -128,7 +134,8 @@ class ibapihandle(EWrapper, EClient):
 			self.rmReqId(reqId)
 			return res
 
-	def getHistoricalData(self, contract :Contract, end, duration, tick, type, timeout=60):
+	def getHistoricalBarData(self, contract :Contract, end, duration, tick, type, timeout=60):
+		self.__debug(contract.conId, end, duration, tick, type, timeout)
 		getHistoricalData_event = Event()
 		getHistoricalData_data = []
 		reqId = self.getReqId()
@@ -137,55 +144,20 @@ class ibapihandle(EWrapper, EClient):
 		self.reqHistoricalData(reqId, contract, end, duration, tick, type, 1, 1, False, [])
 		getHistoricalData_event.wait(timeout)
 
-		print(type(getHistoricalData_data[0]))
-		return 99
 		try:
 			if len(getHistoricalData_data) > 0:
-				if type(getHistoricalData_data[0]) == BarData :
+				if isinstance(getHistoricalData_data[0], BarData) :
 					res = getHistoricalData_data
-					self.__debug('getHistoricalData <{}> Block <{}> Items <{}>'.format(contract.symbol, end, len(getHistoricalData_data)))
+					self.__debug('getHistoricalData <{}> Block <{}> Items <{}>'.format(contract.conId, end, len(getHistoricalData_data)))
 				else:
 					res = 1
-					self.__debug("getHistoricalData_data <Invalid data>")
+					self.__debug("getHistoricalData <{}> <Invalid data>".format(contract.conId))
 			else:
 				res = 2
-				self.__debug('getHistoricalData_data <No data received>')
+				self.__debug('getHistoricalData <{}> <No data received>'.format(contract.conId))
 		finally:
 			self.rmReqId(reqId)
 			return res
-
-
-	def tblOptionChainAppend(self, contract :Contract):
-		arr = [	['conId', 'symbol', 'secType', 'currency', 'tblOptionName'],
-				[contract.conId, contract.symbol, contract.secType, contract.currency, '{}_OPT'.format(contract.symbol)]]
-		return self.database.tblInsertArray('general.optionChain', arr, insert='INSERT IGNORE INTO')
-
-	def tblContractAppend(self, contractList):
-		df = contractArray().df
-		for item in contractList:
-			df = df.append(pd.DataFrame([[	item.symbol, item.secType, item.lastTradeDateOrContractMonth,
-											item.strike, item.right, item.multiplier, item.exchange, item.primaryExchange,
-											item.currency, item.localSymbol, item.tradingClass, int(item.includeExpired), item.secType
-										]], [item.conId], df.columns))
-		return self.database.tblInsertDataFrame('general.contract', df, indexname='conId', insert='INSERT IGNORE INTO')
-
-	def tblContractOptionChainAppend(self, contract :Contract, contractList):
-		# create table, if needed
-		table = 'general.{}_optionChain_Put'.format(contract.symbol)
-		date = 'conId_{}'.format(contract.lastTradeDateOrContractMonth)
-		if type(self.database.tblCreate(table, 'strike FLOAT NOT NULL', 'conRight VARCHAR(255) NOT NULL', '{} INT UNIQUE'.format(date))) != int:
-			self.database.tblAlter(table, 'ADD {} INT UNIQUE'.format(date))
-
-		df = pd.DataFrame([], columns=['strike', 'conRight', date])
-		for item in contractList:
-			df = df.append(pd.DataFrame([[item.strike, item.right, item.conId]], columns=df.columns), ignore_index=True)
-		#print(df)
-		self.database.tblInsertDataFrame(table, df, insert='INSERT IGNORE INTO', incl_index=0)
-		# make DataFrame and INSERT
-		# no error, and right execution, however, not working
-		# if you copy the string code and execute it in the console, it works...
-		#for item in df[df['right'] == 'P'].index :
-			#self.database.execute('INSERT INTO {table} (strike, {date}) VALUES ({strike}, {conId}) ON DUPLICATE KEY UPDATE {date}={conId}'.format(table=tablePut, date=date, strike=df.loc[item, 'strike'], conId=df.loc[item, date]))
 
 	def downloadOptionChain(self, con :Contract):
 		downloadOptionChain_event = Event()
@@ -252,6 +224,55 @@ class ibapihandle(EWrapper, EClient):
 			#if con.strike == '' : return errContract().missing_strike
 			#contractChain.strike = con.strike
 
+	# TABLE APPREND METHODs
+	# DEF tblHistoricalBarDataAppend
+	def tblHistoricalBarDataAppend(self, contract :Contract, barDataList, dry=0):
+		barDataArr = barDataArray()
+		table = 'history.{}'.format(contract.conId)
+		for item in barDataList:
+			barDataArr.df = barDataArr.df.append(pd.DataFrame([[	item.open, item.high, item.low, item.close, item.volume, item.average, item.barCount
+										]], [pd.to_datetime(item.date)], barDataArr.df.columns))
+		if dry == 0:
+			self.database.tblCreateFromDataFrame(table, barDataArr.df, barDataArr.sqlhead[1], indexname='date', data=0)
+			self.database.tblInsertDataFrame(table, barDataArr.df, indexname='date', insert='INSERT IGNORE INTO')
+		return barDataArr
+	# END tblHistoricalBarDataAppend
+	# DEF tblContractAppend
+	def tblContractAppend(self, contractList):
+		df = contractArray().df
+		for item in contractList:
+			df = df.append(pd.DataFrame([[	item.symbol, item.secType, item.lastTradeDateOrContractMonth,
+											item.strike, item.right, item.multiplier, item.exchange, item.primaryExchange,
+											item.currency, item.localSymbol, item.tradingClass, int(item.includeExpired), item.secType
+										]], [item.conId], df.columns))
+		return self.database.tblInsertDataFrame('general.contract', df, indexname='conId', insert='INSERT IGNORE INTO')
+	# END tblContractAppend
+	# ignore
+	def tblOptionChainAppend(self, contract :Contract):
+		arr = [	['conId', 'symbol', 'secType', 'currency', 'tblOptionName'],
+				[contract.conId, contract.symbol, contract.secType, contract.currency, '{}_OPT'.format(contract.symbol)]]
+		return self.database.tblInsertArray('general.optionChain', arr, insert='INSERT IGNORE INTO')
+	# ignore
+	def tblContractOptionChainAppend(self, contract :Contract, contractList):
+		# create table, if needed
+		table = 'general.{}_optionChain_Put'.format(contract.symbol)
+		date = 'conId_{}'.format(contract.lastTradeDateOrContractMonth)
+		if type(self.database.tblCreate(table, 'strike FLOAT NOT NULL', 'conRight VARCHAR(255) NOT NULL', '{} INT UNIQUE'.format(date))) != int:
+			self.database.tblAlter(table, 'ADD {} INT UNIQUE'.format(date))
+
+		df = pd.DataFrame([], columns=['strike', 'conRight', date])
+		for item in contractList:
+			df = df.append(pd.DataFrame([[item.strike, item.right, item.conId]], columns=df.columns), ignore_index=True)
+		#print(df)
+		self.database.tblInsertDataFrame(table, df, insert='INSERT IGNORE INTO', incl_index=0)
+		# make DataFrame and INSERT
+		# no error, and right execution, however, not working
+		# if you copy the string code and execute it in the console, it works...
+		#for item in df[df['right'] == 'P'].index :
+			#self.database.execute('INSERT INTO {table} (strike, {date}) VALUES ({strike}, {conId}) ON DUPLICATE KEY UPDATE {date}={conId}'.format(table=tablePut, date=date, strike=df.loc[item, 'strike'], conId=df.loc[item, date]))
+
+
+	# CALL BACK METHODs
 	# contractDetails
 	def contractDetails(self, reqId :int, contractDetails :Contract):
 		req = self.__events[self.__events['reqId'] == reqId]
@@ -263,11 +284,14 @@ class ibapihandle(EWrapper, EClient):
 	# DEF historicalData
 	def historicalData(self, reqId :int, bar :BarData):
 		#print('histData')
-		req = self.__events[self.__events['reqId'] == reqId]
-		if len(req) != 0 :
-			row = req.index.values.astype(int)[0]
-			self.__events.at[row, 'data'].append(bar)
-			print('apprended', len(self.__events.at[row, 'data']))
+		try:
+			req = self.__events[self.__events['reqId'] == reqId]
+			if len(req) != 0 :
+				row = req.index.values.astype(int)[0]
+				self.__events.at[row, 'data'].append(bar)
+				#print('apprended', len(self.__events.at[row, 'data']))
+		except:
+			print('[ERROR] historicalData(reqId={}, bar={}), req={}, row={}'.format(reqId, bar, req, row))
 	# END historicalData
 	# DEF historicalDataEnd
 	def historicalDataEnd(self, reqId :int, start :str, end :str):
