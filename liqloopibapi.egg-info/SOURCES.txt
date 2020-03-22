@@ -1,8 +1,11 @@
 README.md
 setup.py
 liqloopibapi/__init__.py
+liqloopibapi/datatype.py
+liqloopibapi/errorCode.py
 liqloopibapi/liqloopibapi.py
 liqloopibapi/manager.py
+liqloopibapi/unsorted sn.py
 liqloopibapi/version.py
 liqloopibapi.egg-info/PKG-INFO
 liqloopibapi.egg-info/SOURCES.txt
