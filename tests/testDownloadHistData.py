@@ -21,7 +21,7 @@ def main():
 
 	while True:
 		debug("connecting to Gateway and Database...")
-		myApi = ibapihandle(gwcnx(), sqlcnx(host='liqloop.breath2live.de', password='299792458'))
+		myApi = ibapihandle(gwcnx(), sqlcnx(host='', password=''))
 		myApi.database.debugEN = 0
 
 		if myApi.isConnected() == True and myApi.database.isConnected() == True :
