@@ -19,17 +19,17 @@ import sys
 
 
 class ibapihandle(EWrapper, EClient):
-	debugEN = 1
-	debugEN01 = 0
+	debugibapihandle = 1
+	debugibapihandle01 = 0
 	__reqId = []
 	__events = pd.DataFrame([], columns=['reqId', 'funcPnt', 'data'])
 
 	# Debug method
 	def __debug(self, *str):
-		if self.debugEN == 1 :
+		if self.debugibapihandle == 1 :
 			print("[API] {}".format(str))
 	def __debug01(self, *str):
-		if self.debugEN01 == 1 :
+		if self.debugibapihandle01 == 1 :
 			print("[API] {}".format(str))
 
 	# init
@@ -62,7 +62,7 @@ class ibapihandle(EWrapper, EClient):
 	def connectDb(self):
 		self.__debug('connecting to SQL database', self.__sqlcnx)
 		self.database = sqlhandle(self.__sqlcnx.host, self.__sqlcnx.user, self.__sqlcnx.password)
-		self.database.setDebug(level=1, value=0)
+		self.database.debugibapihandle = 1
 
 	def initDb(self):
 		# init base structure # init mktData db

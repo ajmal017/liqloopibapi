@@ -21,8 +21,8 @@ def main():
 
 	while True:
 		debug("connecting to Gateway and Database...")
-		myApi = ibapihandle(gwcnx(), sqlcnx(host='', password=''))
-		myApi.database.debugEN = 0
+		myApi = ibapihandle(gwcnx(), sqlcnx())
+		myApi.database.debugSqlhandle = 0
 
 		if myApi.isConnected() == True and myApi.database.isConnected() == True :
 			debug('Gateway and Database are connected.')
@@ -34,7 +34,7 @@ def main():
 			contract = Contract()
 			contract.symbol = 'ADBE'
 			contract.currency = 'USD'
-			contract.lastTradeDateOrContractMonth = '20200320'
+			contract.lastTradeDateOrContractMonth = '20200327'
 			myApi.downloadOptionChain(contract)
 
 			dfContract = myApi.database.tblReadToDataFrame('*', 'general.contract', index='conId')
@@ -48,8 +48,8 @@ def main():
 			print(cnt_all, 'Packages to download. Starting at', start)
 			errList = []
 
-			myApi.debugEN = 0
-			myApi.database.debugEN = 0
+			myApi.debugibapihandle = 0
+			myApi.database.debugSqlhandle = 0
 
 			for conId in dfFilter.index:
 				histContract = Contract()
